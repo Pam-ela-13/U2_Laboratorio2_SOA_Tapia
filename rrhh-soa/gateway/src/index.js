@@ -1,12 +1,19 @@
 require('dotenv').config();
 const express = require('express');
-const { createProxyMiddleware } = require('http-proxy-middleware');
+const { createProxyMiddleware, fixRequestBody } = require('http-proxy-middleware');
 const rateLimit = require('express-rate-limit');
 const winston   = require('winston');
+const client    = require('prom-client');
 const auth      = require('./middlewares/auth');
 
 const app = express();
-app.use(express.json());
+app.use('/auth/login', express.json());
+client.collectDefaultMetrics();
+const requests = new client.Counter({
+  name: 'gateway_http_requests_total',
+  help: 'Total de peticiones recibidas por el Gateway',
+  labelNames: ['method', 'route', 'status']
+});
 
 const logger = winston.createLogger({
   transports: [new winston.transports.Console({
@@ -24,8 +31,13 @@ app.use(rateLimit({
   message: { error: 'Demasiadas peticiones, intenta en 1 minuto.' }
 }));
 
-app.use((req, _, next) => {
+app.use((req, res, next) => {
   logger.info(`${req.method} ${req.url}`);
+  res.on('finish', () => requests.inc({
+    method: req.method,
+    route: req.route?.path || req.path,
+    status: res.statusCode
+  }));
   next();
 });
 
@@ -34,7 +46,9 @@ app.use('/auth/login', require('./routes/auth'));
 const proxyOpts = (target, name) => ({
   target,
   changeOrigin: true,
+  pathRewrite: path => path.replace(/^\/api/, ''),
   on: {
+    proxyReq: fixRequestBody,
     error: (err, req, res) => {
       logger.error(`[${name}] ${err.message}`);
       res.status(503).json({
@@ -77,6 +91,11 @@ app.get('/health', (_, res) => res.json({
     reclutamiento: process.env.RECLUTAMIENTO_URL || 'http://localhost:3003',
   }
 }));
+
+app.get('/metrics', async (_, res) => {
+  res.set('Content-Type', client.register.contentType);
+  res.end(await client.register.metrics());
+});
 
 app.use((req, res) =>
   res.status(404).json({ error: `Ruta ${req.url} no encontrada` })

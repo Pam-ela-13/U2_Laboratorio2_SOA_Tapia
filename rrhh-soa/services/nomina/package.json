@@ -8,6 +8,8 @@
     "sequelize": "^6.35.1",
     "pg": "^8.11.3",
     "pg-hstore": "^2.3.4",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "amqplib": "^0.10.4",
+    "prom-client": "^15.1.3"
   }
 }

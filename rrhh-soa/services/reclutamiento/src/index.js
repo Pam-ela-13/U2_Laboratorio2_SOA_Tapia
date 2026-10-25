@@ -1,8 +1,14 @@
 require('dotenv').config();
 const express  = require('express');
 const mongoose = require('mongoose');
+const client = require('prom-client');
 const app = express();
 app.use(express.json());
+client.collectDefaultMetrics();
+app.get('/metrics', async (_, res) => {
+  res.set('Content-Type', client.register.contentType);
+  res.end(await client.register.metrics());
+});
 
 const Vacante = mongoose.model('Vacante', new mongoose.Schema({
   titulo:      { type: String, required: true },

@@ -9,10 +9,14 @@ services:
       EMPLEADOS_URL: http://empleados:3001
       NOMINA_URL: http://nomina:3002
       RECLUTAMIENTO_URL: http://reclutamiento:3003
+      RABBITMQ_URL: amqp://rabbitmq:5672
     depends_on:
-      - empleados
-      - nomina
-      - reclutamiento
+      empleados:
+        condition: service_started
+      nomina:
+        condition: service_started
+      reclutamiento:
+        condition: service_started
     networks: [rrhh-net]
     restart: unless-stopped
 
@@ -23,8 +27,11 @@ services:
     environment:
       PORT: 3001
       DATABASE_URL: postgres://postgres:1234@postgres_emp:5432/empleados_db
+      RABBITMQ_URL: amqp://rabbitmq:5672
     depends_on:
       postgres_emp:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks: [rrhh-net]
     restart: unless-stopped
@@ -36,8 +43,11 @@ services:
     environment:
       PORT: 3002
       DATABASE_URL: postgres://postgres:1234@postgres_nom:5432/nomina_db
+      RABBITMQ_URL: amqp://rabbitmq:5672
     depends_on:
       postgres_nom:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     networks: [rrhh-net]
     restart: unless-stopped
@@ -50,7 +60,8 @@ services:
       PORT: 3003
       MONGO_URL: mongodb://mongo:27017/reclutamiento_db
     depends_on:
-      - mongo
+      mongo:
+        condition: service_started
     networks: [rrhh-net]
     restart: unless-stopped
 
@@ -86,6 +97,30 @@ services:
     image: mongo:7
     volumes:
       - mongo_data:/data/db
+    networks: [rrhh-net]
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "15672:15672"
+    networks: [rrhh-net]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      - gateway
+      - empleados
+      - nomina
+      - reclutamiento
     networks: [rrhh-net]
 
 volumes:

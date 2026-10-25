@@ -1,8 +1,15 @@
 require('dotenv').config();
 const express = require('express');
 const { Sequelize, DataTypes } = require('sequelize');
+const amqp = require('amqplib');
+const client = require('prom-client');
 const app = express();
 app.use(express.json());
+client.collectDefaultMetrics();
+app.get('/metrics', async (_, res) => {
+  res.set('Content-Type', client.register.contentType);
+  res.end(await client.register.metrics());
+});
 
 const sequelize = new Sequelize(
   process.env.DATABASE_URL ||
@@ -40,6 +47,9 @@ app.post('/empleados', async (req, res) => {
     });
   try {
     const emp = await Empleado.create(req.body);
+    publishEmployeeCreated(emp).catch(err =>
+      console.error('Error RabbitMQ:', err.message)
+    );
     res.status(201).json(emp);
   } catch (err) {
     if (err.name === 'SequelizeUniqueConstraintError')
@@ -65,6 +75,21 @@ app.delete('/empleados/:id', async (req, res) => {
 app.get('/health', (_, res) => res.json({ servicio: 'empleados', status: 'ok' }));
 
 const PORT = process.env.PORT || 3001;
+async function publishEmployeeCreated(employee) {
+  const connection = await amqp.connect(
+    process.env.RABBITMQ_URL || 'amqp://localhost:5672'
+  );
+  const channel = await connection.createChannel();
+  await channel.assertExchange('rrhh.events', 'topic', { durable: true });
+  channel.publish(
+    'rrhh.events',
+    'empleado.creado',
+    Buffer.from(JSON.stringify({ id: employee.id, cedula: employee.cedula }))
+  );
+  await channel.close();
+  await connection.close();
+}
+
 sequelize.sync({ alter: true })
   .then(() => app.listen(PORT, () =>
     console.log(`Servicio Empleados en http://localhost:${PORT}`)))

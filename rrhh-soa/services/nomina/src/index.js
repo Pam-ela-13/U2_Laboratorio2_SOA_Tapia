@@ -1,9 +1,16 @@
 require('dotenv').config();
 const express = require('express');
 const { Sequelize, DataTypes } = require('sequelize');
+const amqp = require('amqplib');
+const client = require('prom-client');
 
 const app = express();
 app.use(express.json());
+client.collectDefaultMetrics();
+app.get('/metrics', async (_, res) => {
+  res.set('Content-Type', client.register.contentType);
+  res.end(await client.register.metrics());
+});
 
 const sequelize = new Sequelize(
   process.env.DATABASE_URL ||
@@ -93,7 +100,26 @@ app.get('/nomina/:empleado_id/:periodo', async (req, res) => {
 app.get('/health', (_, res) => res.json({ servicio: 'nomina', status: 'ok' }));
 
 const PORT = process.env.PORT || 3002;
+async function consumeEmployeeEvents() {
+  const connection = await amqp.connect(
+    process.env.RABBITMQ_URL || 'amqp://localhost:5672'
+  );
+  const channel = await connection.createChannel();
+  await channel.assertExchange('rrhh.events', 'topic', { durable: true });
+  const queue = await channel.assertQueue('nomina.empleados', { durable: true });
+  await channel.bindQueue(queue.queue, 'rrhh.events', 'empleado.creado');
+  channel.consume(queue.queue, message => {
+    if (message) {
+      console.log(`Evento recibido: ${message.content.toString()}`);
+      channel.ack(message);
+    }
+  });
+}
+
 sequelize.sync({ alter: true })
   .then(() => app.listen(PORT, () =>
     console.log(`Servicio Nomina en http://localhost:${PORT}`)))
+  .then(() => consumeEmployeeEvents().catch(err =>
+    console.error('Error RabbitMQ:', err.message)
+  ))
   .catch(err => { console.error('Error PostgreSQL:', err.message); process.exit(1); });
